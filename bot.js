@@ -37,6 +37,7 @@ async function init() {
 // Alchemy Webhook Endpoint
 app.post('/webhook/alchemy', async (req, res) => {
     const body = req.body;
+    console.log("Webhook data received:", req.body);
 
     // Alchemy webhook payload structure check
     // Alchemy sends an object with 'event' -> 'data' -> 'block' -> 'logs'
