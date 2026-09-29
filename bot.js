@@ -153,3 +153,7 @@ init().then(() => {
         console.log(`Server listening on port ${PORT}`);
     });
 });
+
+app.get('/', (req, res) => {
+    res.send('Bot Server is Running!');
+});
