@@ -36,8 +36,9 @@ async function init() {
 
 // Alchemy Webhook Endpoint
 app.post('/webhook/alchemy', async (req, res) => {
+    // This will print EVERY incoming request (including Alchemy's test ping)
+    console.log("RAW Incoming Webhook Body:", JSON.stringify(req.body, null, 2));
     const body = req.body;
-    console.log("Webhook data received:", req.body);
 
     // Alchemy webhook payload structure check
     // Alchemy sends an object with 'event' -> 'data' -> 'block' -> 'logs'
